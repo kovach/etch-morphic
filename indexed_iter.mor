@@ -8,11 +8,11 @@ module Core = file "core/core.mor"
 // todo generalize to ordered type
 
 module Iter = {
+
   // Stream Definition
   pub type Step k v {
     Done, Skip(Iter k v), Emit(Iter k v, k, v)
   }
-  // todo consider Emit(Iter k v, k, () -> v)
 
   pub type Iter k v {
     Iter( (k, Bool) -> Step k v )
@@ -103,13 +103,14 @@ module Iter = {
 }
 
 module Stream = {
+
   pub type Stream k v {
     Stream(
-      ()        -> Bool,
-      ()        -> k,
-      (k, Bool) -> Stream k v,
-      ()        -> Bool,
-      ()        -> v,
+      ()        -> Bool,       // valid
+      ()        -> k,          // index
+      (k, Bool) -> Stream k v, // seek
+      ()        -> Bool,       // ready
+      ()        -> v,          // value
     )
   }
 
