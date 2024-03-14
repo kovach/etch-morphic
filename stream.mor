@@ -132,7 +132,7 @@ module Stream = {
     Stream(
       \()     -> validA() && validB(),
       \()     -> max(indexA(), indexB()),
-      \(j, r) -> multiply(mul, seekA(j,r), seekB(j,r)),
+      \(j, r) -> multiply(mul, seekA(j, r), seekB(j, r)),
       \()     -> readyA() && readyB() && indexA() = indexB(),
       \()     -> mul(valueA(), valueB())
     )
@@ -142,7 +142,7 @@ module Stream = {
     if valid() {
       let r = ready() in
       let i = index() in
-      let acc_ = if r { f(acc, i, value()) } else {acc} in
+      let acc_ = if r { f(acc, i, value()) } else { acc } in
       fold(f, seek(i, r), acc_)
     } else { acc }
 
@@ -160,14 +160,14 @@ module Stream = {
 
 pub n: Int = 10000000
 
+pub repeat(fn: () -> (), count: Int): () =
+  if count = 0 { () } else { let _ = fn() in repeat(fn, count-1) }
+
+
 proc main(): () =
-  do output(int_to_string(bar())) then
-  do output("starting...\n") then
-  do output(Array.concat(Array.concat("result: ", int_to_string(Iter.test3(n))), "\n")) then
-  do output("done...\n") then
-  do output("starting...\n") then
-  do output(Array.concat(Array.concat("result: ", int_to_string(Stream.test3(n))), "\n")) then
-  do output("done...\n")
+  let count = 10 in
+  let _ = repeat(\() -> let _ = Stream.test3(n) in (), count) in
+  ()
 
 // some array functions
 // arr : Array val
@@ -175,4 +175,3 @@ proc main(): () =
 // extract(arr, idx) : (val, val -> arr)
 // push(arr, val) : arr
 // pop(arr) : val
-
