@@ -5,103 +5,6 @@ module Core = file "core/core.mor"
     module Io expose { writeln },
   }
 
-// todo generalize to ordered type
-
-module Iter = {
-
-  // Stream Definition
-  pub type Step k v {
-    Done, Skip(Iter k v), Emit(Iter k v, k, v)
-  }
-
-  pub type Iter k v {
-    Iter( (k, Bool) -> Step k v )
-  }
-
-  // multiply
-  pub multiply(mul: (v1, v2) -> v3, a: Iter Int v1, b: Iter Int v2): Iter Int v3 =
-    let Iter(fnA) = a in
-    let Iter(fnB) = b in
-
-    Iter(\(i, ready) ->
-      match (fnA(i, ready), fnB(i, ready)) {
-        (Done, _)            -> Done,
-        (_, Done)            -> Done,
-        (Skip(a_), Skip(b_)) -> Skip(multiply(mul, a_, b_)),
-        (Skip(a_), _)        -> Skip(multiply(mul, a_, b)),
-        (_, Skip(b_))        -> Skip(multiply(mul, a, b_)),
-        (Emit(a_, i1, v1), Emit(b_, i2, v2)) ->
-          if i1 < i2 {
-            Skip(multiply(mul, a_, b))
-          } else if i2 < i1 {
-            Skip(multiply(mul, a, b_))
-          } else {
-            Emit(multiply(mul, a_, b_), i1, mul(v1,v2)) // confusing error message (or bug?) when I previously wrote mul(v1, v2)
-          }
-      }
-    )
-
-  pub int_multiply(a: Iter Int Int, b: Iter Int Int): Iter Int Int = multiply(\(i, j) -> i*j, a, b)
-
-  pub range(lo: Int, hi: Int): Iter Int Int =
-    Iter(\(i, ready) ->
-      let advance = if ready { lo <= i } else { lo < i } in
-      if advance {
-        if lo < hi {
-          Emit(range(lo+1, hi), lo+1, lo+1)
-        } else { Done }
-      } else { Skip(range(lo, hi)) })
-
-  pub zero(): Iter Int Int = Iter(\_ -> Done)
-
-  pub map(iter: Iter k a, f: a -> b): Iter k b =
-    let Iter(fn) = iter in
-    Iter(\(i, ready) ->
-      match fn(i, ready) {
-        Emit(xs, k, v) -> Emit(map(xs, f), k, f(v)),
-        Skip(xs) -> Skip(map(xs, f)),
-        Done -> Done,
-      })
-
-  pub array(arr: Array a): Iter Int a =
-    map(range(0, len(arr)), \idx -> get(arr, idx))
-
-  // evaluate
-  pub fold(f : (b,k,v) -> b, iter: Iter k v, i: k, ready: Bool, acc: b): b =
-    let Iter(fn) = iter in
-    match fn(i, ready) {
-      Done -> acc,
-      Skip(a) -> fold(f, a, i, False, acc),
-      Emit(a, k, v) -> fold(f, a, k, True, f(acc,k,v))
-    }
-
-  pub toArray(s: Iter Int v): (Array Int, Array v) =
-    fold(\((ks, vs), k, v) -> (push(ks, k), push(vs, v)),
-         s, 0, True, ([], []))
-
-  pub sum(it : Iter k Int, k0 : k) : Int =
-    fold(\(acc, _, v) -> acc + v,
-         it, k0, True, 0)
-
-  pub test1 : Int = sum(range(0,10000000), 0)
-  pub test2 : Int = sum(zero(), 0)
-
-  pub test3(nb: Int) : Int =
-    let n = nb - 1 in
-    let i = range(0,n) in
-    let j = range(0,n) in
-    let k = range(0,n) in
-    sum(int_multiply(int_multiply(i,j), k), 0)
-
-  pub test4() : Int =
-    let n = 100000000 in
-    let i = range(0,n) in
-    let j = range(0,n) in
-    let (is, vs) = toArray(int_multiply(i,j)) in
-    len(is)
-
-}
-
 module Stream = {
 
   pub type Stream k v {
@@ -126,6 +29,44 @@ module Stream = {
       \()     -> lo
     )
 
+  // 15% slower on 3-way vec mul microbenchmark
+  pub type Ord { Lt, Gt, Eq }
+  pub sparse_aux_cmp(pos: Int, cmp: (k, k) -> Ord, is: Array k, vs: Array v): Stream k v =
+    Stream(
+      \()     -> pos < len(is),
+      \()     -> get(is, pos),
+      \(j, r) ->
+        let i = get(is, pos) in
+        let advance =
+          match cmp(i, j) {
+            Lt -> True,
+            Eq -> r,
+            Gt -> False } in
+        let pos_ = if advance { pos + 1 } else { pos } in
+        sparse_aux_cmp(pos_, cmp, is, vs) ,
+      \()     -> True,
+      \()     -> get(vs, pos)
+    )
+
+  pub sparse_aux(pos: Int, lt: (k, k) -> Bool, eq: (k, k) -> Bool, is: Array k, vs: Array v): Stream k v =
+    Stream(
+      \()     -> pos < len(is),
+      \()     -> get(is, pos),
+      \(j, r) ->
+        let i = get(is, pos) in
+        let advance = lt(i, j) || (r && eq(i, j)) in
+        let pos_ = if advance { pos + 1 } else { pos } in
+        sparse_aux(pos_, lt, eq, is, vs) ,
+      \()     -> True,
+      \()     -> get(vs, pos)
+    )
+
+  pub intCmp(i: Int, j: Int): Ord = if i < j { Lt } else { if i = j { Eq } else { Gt } }
+
+  pub sparse(s: SparseArray Int Int): Stream Int Int =
+    let SparseArray(is, vs) = s in
+    sparse_aux(0, \(i,j) -> i < j, \(i,j) -> i = j, is, vs)
+
   pub multiply(mul: (v1, v2) -> v3, a: Stream Int v1, b: Stream Int v2): Stream Int v3 =
     let Stream(validA, indexA, seekA, readyA, valueA) = a in
     let Stream(validB, indexB, seekB, readyB, valueB) = b in
@@ -137,6 +78,14 @@ module Stream = {
       \()     -> mul(valueA(), valueB())
     )
 
+  pub intMul(a: Stream Int Int, b: Stream Int Int): Stream Int Int = multiply(\(i,j) -> i*j, a, b)
+
+  pub mapWithKey(f: (k, v1) -> v2, s: Stream k v1): Stream k v2 =
+    let Stream(valid, index, seek, ready, value) = s in
+    Stream(valid, index, \(i,r) -> mapWithKey(f, seek(i,r)), ready, \() -> f(index(), value()))
+
+  pub map(f: v1 -> v2, s: Stream k v1): Stream k v2 = mapWithKey(\(_, v) -> f(v), s)
+
   pub fold(f: (b,k,v) -> b, s: Stream k v, acc: b): b =
     let Stream(valid, index, seek, ready, value) = s in
     if valid() {
@@ -145,6 +94,12 @@ module Stream = {
       let acc_ = if r { f(acc, i, value()) } else { acc } in
       fold(f, seek(i, r), acc_)
     } else { acc }
+
+  pub type SparseArray k v { SparseArray(Array k, Array v) }
+
+  pub toArray(s: Stream k v): SparseArray k v =
+    fold(\(SparseArray(ks, vs), k, v) -> SparseArray(push(ks, k), push(vs, v)),
+         s, SparseArray([], []))
 
   pub sum(s : Stream k Int) : Int =
     fold(\(acc, _, v) -> acc + v, s, 0)
@@ -156,17 +111,26 @@ module Stream = {
     let k = range(0,n) in
     sum(multiply(mul, i, multiply(mul, j, k)))
 
+  pub test4_aux(n: Int): SparseArray Int Int =
+    let mul = \(i,j) -> i * j in
+    let a = toArray(map(\k -> k, range(0,n))) in
+    a
+
+  pub test4(s: SparseArray Int Int) : Int =
+    let x = sparse(s) in
+    sum(intMul(x, intMul(x,x)))
 }
 
 pub n: Int = 10000000
 
-pub repeat(fn: () -> (), count: Int): () =
-  if count = 0 { () } else { let _ = fn() in repeat(fn, count-1) }
-
+pub repeat(fn: () -> Int, count: Int): Int =
+  if count <= 1 { fn() } else { let _ = fn() in repeat(fn, count-1) }
 
 proc main(): () =
   let count = 10 in
-  let _ = repeat(\() -> let _ = Stream.test3(n) in (), count) in
+  do writeln(int_to_string(repeat(\() -> Stream.test3(n), count))) then
+  let s = Stream.test4_aux(n) in
+  do writeln(int_to_string(repeat(\() -> Stream.test4(s), count))) then
   ()
 
 // some array functions
